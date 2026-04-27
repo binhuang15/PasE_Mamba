@@ -12,16 +12,26 @@
 pip install torch torchvision numpy pandas matplotlib pillow scipy timm
 ```
 
-The repo vendors `mamba_ssm` and related extensions; you do not need a separate `pip install mamba_ssm` unless you intentionally replace the bundled code.
+The repo vendors `mamba_ssm` and the `causal-conv1d` **sources**; you do not need `pip install mamba_ssm` unless you replace the bundle. **Build the CUDA extension locally** (requires a toolchain matching your PyTorch/CUDA):
+
+```bash
+cd causal-conv1d
+pip install -e .
+cd ..
+```
+
+If `pip install -e .` fails, follow `causal-conv1d/README.md` (NVCC, matching CUDA version).
 
 ## Clone and working directory
 
+Official repository: **[binhuang15/PasE_Mamba](https://github.com/binhuang15/PasE_Mamba)**.
+
 ```bash
-git clone https://github.com/<your-org>/<your-repo>.git
-cd <your-repo>   # or cd PasE-Mamba if you ship this folder alone
+git clone https://github.com/binhuang15/PasE_Mamba.git
+cd PasE_Mamba
 ```
 
-Run scripts from **`PasE-Mamba/`** (e.g. `python run_pipeline.py ...`).
+Run scripts from the **repository root** (same directory as this `README.md`, e.g. `python run_pipeline.py ...`).
 
 **Path arguments are explicit everywhere:** `train.py`, `eval.py`, and `build_npy_from_processed_data.py` do not assume a fixed dataset root. `run_pipeline.py` requires `--artifacts` and `--model-save`, and requires `--processed-internal` / `--processed-external` whenever the manifest build step runs (see `--help`).
 
@@ -68,7 +78,7 @@ demo_data/
 | `--artifacts` | Output: `npy_internal/`, `npy_eval_merged/`, `processed_eval_merged/`, etc. |
 | `--model-save` | Output: `Best_model.pt`, training curves; evaluation writes `eval_*` CSVs and predictions under this root as well. |
 
-Example (from `PasE-Mamba/`):
+Example (from the repo root):
 
 ```bash
 python run_pipeline.py \
@@ -212,7 +222,7 @@ See **Evaluating a trained checkpoint only** above.
 
 ## License and citation
 
-Add your LICENSE and preferred citation text when publishing; the suggested project name is **PasE-Mamba**.
+This project is released under the **MIT License**; see [`LICENSE`](LICENSE) in the repository root. When citing, refer to the work as **PasE-Mamba** and link this repository.
 
 ---
 
