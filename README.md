@@ -1,6 +1,6 @@
 # PasE-Mamba
 
-**PasE-Mamba** is an ultrasound placenta segmentation codebase built around **`PasEMamba`** (historically named MambaUnetEDL). It reports Placenta / Myometrium region metrics and supports **evidential deep learning (EDL)** uncertainty with **DPE** (**Decoupled Prediction-Evidence**) feeding **EASF** (**Evidence-driven Anisotropic Scan Fusion**) in the SS2D backbone.
+**PasE-Mamba** is an ultrasound placenta segmentation codebase built around **`PasEMamba`**. It reports Placenta / Myometrium region metrics and supports **evidential deep learning (EDL)** uncertainty with **DPE** (**Decoupled Prediction-Evidence**) feeding **EASF** (**Evidence-driven Anisotropic Scan Fusion**) in the SS2D backbone.
 
 ## Environment
 
@@ -215,30 +215,6 @@ See **Evaluating a trained checkpoint only** above.
 
 ---
 
-## Core file map
-
-| File | Role |
-|------|------|
-| `train.py` | Training entry (`--data-path`, `--pwd-path`, `--model-save` required) |
-| `eval.py` | Evaluation entry (`--data-root`, `--pwd-path`, `--model-root`; `--results-root` optional, default `Results`) |
-| `run_pipeline.py` | Manifest build → train → eval |
-| `build_npy_from_processed_data.py` | Build `*.npy` and merged processed tree from two processed roots |
-| `data_paths.py` | Resolve `train.npy` / `validation.npy` / `Best_model.pt` |
-| `datagenerator.py` | Dataset I/O |
-| `vision_mamba.py` | **`PasEMamba`** architecture |
-| `mamba_sys.py` | VSSM backbone (runtime **DPE** / **EASF** hooks) |
-| `edl_utils.py` | EDL losses, **DPE** routing map, **EASF** fusion helpers |
-
----
-
 ## License and citation
 
 This project is released under the **MIT License**; see [`LICENSE`](LICENSE) in the repository root. When citing, refer to the work as **PasE-Mamba** and link this repository.
-
----
-
-## FAQ
-
-1. **CUDA OOM**: Lower `--batch-size` (also forwarded by `run_pipeline.py` to `train.py`).
-2. **Manifest build errors**: Verify `1-Normal` / `2-PAS`, sufficient internal cases, and no filename collisions on merge.
-3. **Evaluation missing files**: Confirm `npy_eval_merged/validation.npy`, consistent `processed_eval_merged`, and `Best_model.pt` or `--ckpt`.
