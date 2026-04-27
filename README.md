@@ -1,6 +1,6 @@
 # PasE-Mamba
 
-**PasE-Mamba** is an ultrasound placenta segmentation codebase built around **`PasEMamba`** (historically named MambaUnetEDL). It reports Placenta / Myometrium region metrics and supports **evidential deep learning (EDL)** uncertainty with **DPE** (dual-source prior–evidence routing) feeding **EASF** (evidence-aware anisotropic state-space fusion) in the SS2D backbone.
+**PasE-Mamba** is an ultrasound placenta segmentation codebase built around **`PasEMamba`**. It reports Placenta / Myometrium region metrics and supports **evidential deep learning (EDL)** uncertainty with **DPE** (Decoupled Prediction-Evidence) feeding **EASF** (Evidence-driven Anisotropic Scan Fusion) in the SS2D backbone.
 
 ## Environment
 
