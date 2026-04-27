@@ -3,7 +3,7 @@
 Build train/validation manifests and an evaluation merge tree from image-only
 ``processed_internal`` / ``processed_external`` (``1-Normal``, ``2-PAS`` subfolders).
 
-Does not write back into ``demo_data`` by default; output root is user-chosen (e.g. ``pipeline_artifacts/``).
+Does not write back into ``demo_data`` by default; output root is user-chosen (conventional name: ``Training_Evaluation_Data/``).
 
 Each row matches ``MyDatasetLoader``: ``[filename, folder_label]``.
 """
@@ -90,14 +90,14 @@ def _merge_processed(internal_root: str, external_root: str, dst_root: str) -> N
                 shutil.copy2(sp, dp)
 
 
-def build_pipeline_artifacts(
+def build_training_evaluation_data(
     *,
     processed_internal: str,
     processed_external: str,
-    artifacts_dir: str,
+    data_root: str,
 ) -> dict[str, str]:
     """
-    Writes under ``artifacts_dir``::
+    Writes under ``data_root`` (e.g. ``Training_Evaluation_Data``)::
 
       npy_internal/{train,validation}.npy
       npy_external/validation.npy
@@ -108,17 +108,17 @@ def build_pipeline_artifacts(
     """
     processed_internal = os.path.abspath(processed_internal)
     processed_external = os.path.abspath(processed_external)
-    artifacts_dir = os.path.abspath(artifacts_dir)
+    data_root = os.path.abspath(data_root)
 
     if not os.path.isdir(processed_internal):
         raise FileNotFoundError(f"Missing internal processed directory: {processed_internal}")
     if not os.path.isdir(processed_external):
         raise FileNotFoundError(f"Missing external processed directory: {processed_external}")
 
-    npy_int = os.path.join(artifacts_dir, "npy_internal")
-    npy_ext = os.path.join(artifacts_dir, "npy_external")
-    npy_merged = os.path.join(artifacts_dir, "npy_eval_merged")
-    merged_pwd = os.path.join(artifacts_dir, "processed_eval_merged")
+    npy_int = os.path.join(data_root, "npy_internal")
+    npy_ext = os.path.join(data_root, "npy_external")
+    npy_merged = os.path.join(data_root, "npy_eval_merged")
+    merged_pwd = os.path.join(data_root, "processed_eval_merged")
 
     for d in (npy_int, npy_ext, npy_merged):
         os.makedirs(d, exist_ok=True)
@@ -151,7 +151,7 @@ def build_pipeline_artifacts(
     _merge_processed(processed_internal, processed_external, merged_pwd)
 
     return {
-        "artifacts_dir": artifacts_dir,
+        "data_root": data_root,
         "train_data": npy_int,
         "train_pwd": processed_internal,
         "eval_data": npy_merged,
@@ -179,7 +179,7 @@ def main() -> None:
     p.add_argument(
         "--out",
         required=True,
-        help="Output root for npy_* and processed_eval_merged",
+        help="Output root for npy_* and processed_eval_merged (e.g. Training_Evaluation_Data)",
     )
     args = p.parse_args()
 
@@ -187,12 +187,12 @@ def main() -> None:
     external = args.external if os.path.isabs(args.external) else os.path.join(repo, args.external)
     out = args.out if os.path.isabs(args.out) else os.path.join(repo, args.out)
 
-    paths = build_pipeline_artifacts(
+    paths = build_training_evaluation_data(
         processed_internal=internal,
         processed_external=external,
-        artifacts_dir=out,
+        data_root=out,
     )
-    print("Wrote pipeline manifests and merged processed tree:")
+    print("Wrote training/evaluation manifests and merged processed tree:")
     for k in ("train_data", "train_pwd", "eval_data", "eval_pwd"):
         print(f"  {k}: {paths[k]}")
 

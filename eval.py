@@ -162,7 +162,7 @@ def print_mamba_edl_weight_fingerprint(model: torch.nn.Module, *, tag: str = "")
 def patch_mamba_edl_legacy_modules(model: torch.nn.Module) -> None:
     """
     Older ``torch.save(model)`` blobs may omit fields added after training; patch attributes so
-    ``mamba_sys`` / ``mamba_sys_legacy`` forward (DPE/EASF hooks) does not raise ``AttributeError``.
+    ``mamba_sys`` / ``mamba_sys_legacy`` forward (DPE / EASF hooks) does not raise ``AttributeError``.
     """
     bb = getattr(model, "backbone", None)
     if bb is not None:
@@ -236,7 +236,7 @@ def mamba_edl_forward_for_eval(
     """
     - ``refine_with_prob=True``: use native probability refinement in ``PasEMamba.forward`` (needs ``dec_prob_proj``).
     - ``u_second_pass=True`` (no prob refine): first pass estimates EDL uncertainty ``u``; second pass calls
-      ``set_runtime_attn(u)`` so SS2D **EASF** gating consumes **DPE**-routed uncertainty.
+      ``set_runtime_attn(u)`` so SS2D **EASF** (Evidence-driven Anisotropic Scan Fusion) uses **DPE** (Decoupled Prediction-Evidence) uncertainty.
     - Both False: single forward (legacy single-pass; backbone does not use ``u``).
     """
     if refine_with_prob:
@@ -324,7 +324,7 @@ def run_validation_eval(device, config):
         use_edl_u_second_pass = False
     set_anisotropic_fusion(model, enabled=use_anisotropic_fusion)
     print(
-        f"[Eval] SS2D fusion: {'EASF (anisotropic + DPE uncertainty)' if use_anisotropic_fusion else 'isotropic (uniform four-way sum)'} | "
+        f"[Eval] SS2D fusion: {'EASF (Evidence-driven Anisotropic Scan Fusion + DPE u)' if use_anisotropic_fusion else 'isotropic (uniform four-way sum)'} | "
         f"refine_prob={use_refine_with_prob} | edl_u_second_pass={use_edl_u_second_pass}"
     )
     print(
@@ -512,8 +512,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "PasE-Mamba (PasEMamba) evaluation. Requires --data-root, --pwd-path, --model-root. "
+            "Writes CSV and predictions under --results-root (default: Results). "
             "If --ckpt is omitted, resolves Best_model.pt under --model-root. "
-            "EASF variant: env EASF_FUSION_VARIANT=v2 (default) or legacy."
+            "EASF (Evidence-driven Anisotropic Scan Fusion): env EASF_FUSION_VARIANT=v2 (default) or legacy."
         )
     )
     parser.add_argument(
@@ -524,13 +525,18 @@ def main() -> None:
     parser.add_argument(
         "--model-root",
         required=True,
-        help="Directory for Best_model.pt and evaluation outputs (CSV, predictions)",
+        help="Directory containing Best_model.pt (training outputs; e.g. TrainedCheckpoints)",
+    )
+    parser.add_argument(
+        "--results-root",
+        default="Results",
+        help="Directory for evaluation CSVs and eval_* prediction folders (default: Results)",
     )
     parser.add_argument(
         "--aniso",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Enable EASF (anisotropic SS2D fusion + DPE uncertainty); --no-aniso uses isotropic sum",
+        help="Enable EASF + DPE-routed uncertainty (Decoupled Prediction-Evidence); --no-aniso uses isotropic sum",
     )
     parser.add_argument(
         "--edl-u-second-pass",
@@ -563,6 +569,7 @@ def main() -> None:
     )
 
     model_save_root = _abs_under_repo(args.model_root)
+    results_root = _abs_under_repo(args.results_root)
     data_root = _abs_under_repo(args.data_root)
     pwd_path = _abs_under_repo(args.pwd_path)
     if args.ckpt:
@@ -574,6 +581,7 @@ def main() -> None:
         "data_root": data_root,
         "model_save_root": model_save_root,
         "pwd_path": pwd_path,
+        "eval_result_base": results_root,
         "num_class": 3,
         "input_channels": 1,
         "patchsize": (224, 224),
@@ -586,6 +594,7 @@ def main() -> None:
     }
 
     os.makedirs(base_config["model_save_root"], exist_ok=True)
+    os.makedirs(results_root, exist_ok=True)
 
     tag_suffix = f"_{args.result_tag.strip()}" if args.result_tag else ""
 
@@ -601,7 +610,11 @@ def main() -> None:
         cfg["pwd_path"] = pwd_path
         cfg["result_save_dir"] = f"eval_PasE-Mamba_{slug}{tag_suffix}"
         print(f"\n{'=' * 16} ▶ {suite_label} ▶ {'=' * 16}")
-        print(f"  data_root={data_root}\n  pwd_path={pwd_path}\n  result_subdir={cfg['result_save_dir']}\n")
+        print(
+            f"  data_root={data_root}\n  pwd_path={pwd_path}\n"
+            f"  results_root={cfg.get('eval_result_base') or cfg['model_save_root']}\n"
+            f"  result_subdir={cfg['result_save_dir']}\n"
+        )
         run_validation_eval(device, cfg)
 
     print("[Eval] All requested evaluation runs finished.")

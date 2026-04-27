@@ -48,7 +48,7 @@ class UnifiedSegEDLHead(nn.Module):
 
 
 class PasEMamba(nn.Module):
-    """PasE-Mamba: U-Mamba-style encoder–decoder, dual heads (segmentation logits + EDL), decoder uncertainty gating (DPE/EASF pathway)."""
+    """PasE-Mamba: U-Mamba-style encoder–decoder, dual heads (segmentation logits + EDL), with DPE (Decoupled Prediction-Evidence) and EASF (Evidence-driven Anisotropic Scan Fusion) in the SS2D path."""
 
     def __init__(self, num_classes: int, config):
         super().__init__()

@@ -24,12 +24,12 @@ def dpe_easf_routing_uncertainty(
     eps: float = 1e-8,
 ) -> torch.Tensor:
     """
-    **DPE dual-source routing field** u ∈ [B,1,H,W]: per-sample min–max normalized maps used as EASF gating input.
+    **DPE (Decoupled Prediction-Evidence) routing field** u ∈ [B,1,H,W]: per-sample min–max maps for **EASF**
+    (Evidence-driven Anisotropic Scan Fusion) gating.
 
     - **Vacuity**: Dirichlet epistemic uncertainty K/S (matches Phase-1 u).
     - **Conflict**: half the total-variation distance between prior softmax(prior) and EDL expectation p = α/S,
-      in [0,1], emphasizing locations where the segmentation prior and evidential head disagree (PasE-specific;
-      vanilla EDL segmentation omits this branch).
+      in [0,1], emphasizing prior–evidence disagreement (PasE-specific; vanilla EDL segmentation omits this branch).
 
     Fused as ``(1-w) * norm(vacuity) + w * norm(conflict)``, then clamped; no extra trainable parameters.
     """
@@ -144,7 +144,7 @@ def _zero_shot_easf_legacy(
     uncertainty: torch.Tensor,
     temperature: float = 1.0,
 ) -> torch.Tensor:
-    """Legacy EASF: gradient-sharpness softmax only; blend with uniform 0.25 via u."""
+    """Legacy EASF (Evidence-driven Anisotropic Scan Fusion): gradient-sharpness softmax; blend with uniform 0.25 via DPE u."""
     dx = torch.abs(Y_dirs[:, :, :, :, 1:] - Y_dirs[:, :, :, :, :-1])
     dx = F.pad(dx, (1, 0, 0, 0))
     dy = torch.abs(Y_dirs[:, :, :, 1:, :] - Y_dirs[:, :, :, :-1, :])
@@ -163,7 +163,7 @@ def _zero_shot_easf_v2(
     temperature: float = 1.0,
 ) -> torch.Tensor:
     """
-    Training-free EASF v2: modulate sharpness by **four-way agreement** (lower variance → stronger anisotropic trust);
+    Training-free EASF v2 (Evidence-driven Anisotropic Scan Fusion): modulate sharpness by **four-way agreement** (lower variance → stronger anisotropic trust);
     add a **uniform floor** after softmax to avoid collapse; apply **gamma compression** to u plus optional
     **global high-uncertainty dampening** (reduce heuristic reliance when the whole field is uncertain / OOD).
 
@@ -221,7 +221,7 @@ def zero_shot_easf(
     temperature: float = 1.0,
 ) -> torch.Tensor:
     """
-    Four-way SS2D feature fusion (EASF; no learned parameters). Default ``EASF_FUSION_VARIANT=v2``; ``legacy`` matches the original variant.
+    Four-way SS2D feature fusion (**EASF**: Evidence-driven Anisotropic Scan Fusion; no learned parameters). Default ``EASF_FUSION_VARIANT=v2``; ``legacy`` matches the original variant.
     """
     variant = os.environ.get("EASF_FUSION_VARIANT", "v2").strip().lower()
     if variant in ("legacy", "v0", "v1", "old", "0"):

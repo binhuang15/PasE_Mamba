@@ -28,7 +28,7 @@ cudnn.deterministic = True
 
 
 def set_anisotropic_fusion(model: nn.Module, enabled: bool = True):
-    """Toggle EASF (anisotropic SS2D fusion driven by DPE uncertainty) on all SS2D blocks."""
+    """Toggle EASF (Evidence-driven Anisotropic Scan Fusion) driven by DPE (Decoupled Prediction-Evidence) maps on all SS2D blocks."""
     num_blocks = 0
     for m in model.modules():
         if isinstance(m, SS2D):
@@ -397,7 +397,7 @@ def main() -> None:
     p.add_argument(
         "--model-save",
         required=True,
-        help="Output directory for Best_model.pt and training curves",
+        help="Output directory for Best_model.pt and training curves (e.g. TrainedCheckpoints)",
     )
     p.add_argument("--min-best-epoch", type=int, default=None, help="First epoch (1-based) eligible to save Best_model")
     args = p.parse_args()

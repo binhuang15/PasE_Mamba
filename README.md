@@ -1,6 +1,6 @@
 # PasE-Mamba
 
-**PasE-Mamba** is an ultrasound placenta segmentation codebase built around **`PasEMamba`** (historically named MambaUnetEDL). It reports Placenta / Myometrium region metrics and supports **evidential deep learning (EDL)** uncertainty with **DPE** (dual-source prior–evidence routing) feeding **EASF** (evidence-aware anisotropic state-space fusion) in the SS2D backbone.
+**PasE-Mamba** is an ultrasound placenta segmentation codebase built around **`PasEMamba`** (historically named MambaUnetEDL). It reports Placenta / Myometrium region metrics and supports **evidential deep learning (EDL)** uncertainty with **DPE** (**Decoupled Prediction-Evidence**) feeding **EASF** (**Evidence-driven Anisotropic Scan Fusion**) in the SS2D backbone.
 
 ## Environment
 
@@ -31,9 +31,17 @@ git clone https://github.com/binhuang15/PasE_Mamba.git
 cd PasE_Mamba
 ```
 
-Run scripts from the **repository root** (same directory as this `README.md`, e.g. `python run_pipeline.py ...`).
+Run scripts from the **repository root** (same directory as this `README.md`). **Examples below use repo-relative paths** so bundled `demo_data/` runs without edits.
 
-**Path arguments are explicit everywhere:** `train.py`, `eval.py`, and `build_npy_from_processed_data.py` do not assume a fixed dataset root. `run_pipeline.py` requires `--artifacts` and `--model-save`, and requires `--processed-internal` / `--processed-external` whenever the manifest build step runs (see `--help`).
+### Recommended directory names
+
+| Name | Role |
+|------|------|
+| **`Training_Evaluation_Data`** | Pass to `--artifacts` / `build_npy_from_processed_data.py --out`. Holds `npy_*`, `processed_eval_merged/`, etc. |
+| **`TrainedCheckpoints`** | Pass to `--model-save` / `train.py --model-save` / `eval.py --model-root`. Holds `Best_model.pt` and training curves. |
+| **`Results`** | Evaluation outputs: `eval_*` subfolders with `validation_results.csv`, predictions, uncertainty maps (`eval.py --results-root`, default `Results`). |
+
+**Path arguments remain explicit:** `train.py`, `eval.py`, and `build_npy_from_processed_data.py` do not assume a fixed dataset root. `run_pipeline.py` requires `--artifacts` and `--model-save`, and requires `--processed-internal` / `--processed-external` whenever the manifest build step runs (see `--help`).
 
 ---
 
@@ -41,9 +49,9 @@ Run scripts from the **repository root** (same directory as this `README.md`, e.
 
 `run_pipeline.py` assumes you start from **two processed roots only** (no pre-built `train.npy` / `validation.npy`). It calls `build_npy_from_processed_data.py`, then `train.py`, then `eval.py`.
 
-### Directory layout (two processed roots; names are yours)
+### Directory layout (two processed roots)
 
-Organize data as **two roots** (example uses in-repo `demo_data/`; any absolute paths are fine):
+Organize data as **two roots** (example uses in-repo `demo_data/`):
 
 ```text
 demo_data/
@@ -66,7 +74,7 @@ demo_data/
 | Subfolders | Must be **`1-Normal`** and **`2-PAS`** (loader contract). |
 | Image / mask | For each case: `stem_image.ext` and `stem_mask.ext` in the same class folder. |
 | Extensions | Common raster formats (e.g. `.bmp`, `.png`, `.jpg`). |
-| Merge for evaluation | Files are copied into `artifacts/processed_eval_merged/`. **Avoid duplicate basenames within the same class** across internal vs. external trees. |
+| Merge for evaluation | Files are copied into `Training_Evaluation_Data/processed_eval_merged/` (when `--artifacts Training_Evaluation_Data`). **Avoid duplicate basenames within the same class** across internal vs. external trees. |
 | Counts | Internal split needs enough cases per class to form non-empty train/val manifests (see `build_npy_from_processed_data.py`). External should list all external test cases. |
 
 ### Four CLI paths for one full pipeline
@@ -75,8 +83,9 @@ demo_data/
 |------|------|
 | `--processed-internal` | Internal processed root (training image root for `train.py`). |
 | `--processed-external` | External processed root (held-out style list for evaluation manifest). |
-| `--artifacts` | Output: `npy_internal/`, `npy_eval_merged/`, `processed_eval_merged/`, etc. |
-| `--model-save` | Output: `Best_model.pt`, training curves; evaluation writes `eval_*` CSVs and predictions under this root as well. |
+| `--artifacts` | Output root: `npy_internal/`, `npy_eval_merged/`, `processed_eval_merged/`, etc. (conventional: `Training_Evaluation_Data`). |
+| `--model-save` | Weights and training curves (conventional: `TrainedCheckpoints`). |
+| `--results-root` | Evaluation CSVs and `eval_*` prediction folders (default: `Results`). |
 
 Example (from the repo root):
 
@@ -84,11 +93,11 @@ Example (from the repo root):
 python run_pipeline.py \
   --processed-internal demo_data/processed_internal \
   --processed-external demo_data/processed_external \
-  --artifacts pipeline_artifacts \
-  --model-save Result
+  --artifacts Training_Evaluation_Data \
+  --model-save TrainedCheckpoints
 ```
 
-Order of stages: **build manifests under `artifacts` → train on internal lists → evaluate on merged list + `processed_eval_merged`**.
+Order of stages: **build manifests under `Training_Evaluation_Data` → train → evaluate** (merged list + `processed_eval_merged`).
 
 Smoke test (few epochs):
 
@@ -96,8 +105,8 @@ Smoke test (few epochs):
 python run_pipeline.py \
   --processed-internal demo_data/processed_internal \
   --processed-external demo_data/processed_external \
-  --artifacts pipeline_artifacts \
-  --model-save Result \
+  --artifacts Training_Evaluation_Data \
+  --model-save TrainedCheckpoints \
   --epochs 2 --min-best-epoch 1 --batch-size 2 --eval-tag smoke
 ```
 
@@ -107,66 +116,68 @@ More options: `python run_pipeline.py --help`.
 
 ## Evaluating a trained checkpoint only
 
-You need the same artifacts as after training:
+You need the same layout as after training:
 
-1. **`validation.npy`** under `artifacts/npy_eval_merged/` (e.g. `pipeline_artifacts/npy_eval_merged/validation.npy`).
-2. **Processed root** aligned with that list: `artifacts/processed_eval_merged/`.
-3. **Weights**: `Best_model.pt` under `--model-save` / `--model-root`, or pass **`--ckpt`**.
+1. **`validation.npy`** under `Training_Evaluation_Data/npy_eval_merged/`.
+2. **Processed root** aligned with that list: `Training_Evaluation_Data/processed_eval_merged/`.
+3. **Weights**: `TrainedCheckpoints/Best_model.pt`, or pass **`--ckpt`** (repo-relative path allowed).
 
 ### Option A: `run_pipeline.py` (evaluation only)
 
 ```bash
 python run_pipeline.py --skip-build-npy --skip-train \
-  --artifacts pipeline_artifacts \
-  --model-save Result
+  --artifacts Training_Evaluation_Data \
+  --model-save TrainedCheckpoints
 ```
 
-Custom checkpoint path (forwarded to `eval.py`):
+Custom checkpoint (still writes predictions under `Results` unless you set `--results-root`):
 
 ```bash
 python run_pipeline.py --skip-build-npy --skip-train \
-  --artifacts pipeline_artifacts \
-  --model-save Result \
-  --ckpt /path/to/Best_model.pt
+  --artifacts Training_Evaluation_Data \
+  --model-save TrainedCheckpoints \
+  --ckpt TrainedCheckpoints/Best_model.pt
 ```
 
-`--model-save` still sets where CSVs and prediction folders are written; `--ckpt` selects the tensor file to load.
+`--model-save` / `--model-root` selects where **`Best_model.pt`** is resolved; **`--results-root`** (default `Results`) is where CSVs and `eval_*` trees are written.
 
 ### Option B: `eval.py` directly
 
 ```bash
 python eval.py \
-  --data-root pipeline_artifacts/npy_eval_merged \
-  --pwd-path pipeline_artifacts/processed_eval_merged \
-  --model-root Result
+  --data-root Training_Evaluation_Data/npy_eval_merged \
+  --pwd-path Training_Evaluation_Data/processed_eval_merged \
+  --model-root TrainedCheckpoints \
+  --results-root Results
 ```
 
-With explicit weights:
+With an explicit weight file:
 
 ```bash
 python eval.py \
-  --data-root pipeline_artifacts/npy_eval_merged \
-  --pwd-path pipeline_artifacts/processed_eval_merged \
-  --model-root Result \
-  --ckpt /path/to/Best_model.pt
+  --data-root Training_Evaluation_Data/npy_eval_merged \
+  --pwd-path Training_Evaluation_Data/processed_eval_merged \
+  --model-root TrainedCheckpoints \
+  --results-root Results \
+  --ckpt TrainedCheckpoints/Best_model.pt
 ```
 
-DPE/EASF-related inference switches: `--aniso` / `--no-aniso`, `--edl-u-second-pass` / `--no-edl-u-second-pass`; fusion variant via `EASF_FUSION_VARIANT` (`v2` vs `legacy`). See `python eval.py --help`.
+**DPE** / **EASF** inference switches: `--aniso` / `--no-aniso`, `--edl-u-second-pass` / `--no-edl-u-second-pass`; fusion variant via `EASF_FUSION_VARIANT` (`v2` vs `legacy`). See `python eval.py --help`.
 
 ---
 
 ## Full-scale training with your own `.npy` manifests
 
-If manifests and processed trees already exist elsewhere:
+If manifests and processed trees already exist under a layout you control, keep using **repo-relative** paths from the clone root:
 
 ```bash
 python train.py \
-  --data-path /path/to/npy_dir \
-  --pwd-path /path/to/processed_root \
-  --model-save /path/to/output_dir
+  --data-path Training_Evaluation_Data/npy_internal \
+  --pwd-path my_data/processed_internal \
+  --model-save TrainedCheckpoints
 ```
 
-For evaluation, ensure `--data-root` contains `validation.npy`, `--pwd-path` is the processed root referenced by filenames in that manifest, and `--model-root` (or `--ckpt`) points to the checkpoint.
+(`my_data/processed_internal` is any **repo-relative** processed tree that matches the filenames in `train.npy`.) Use the same `Training_Evaluation_Data` / `TrainedCheckpoints` / `Results` convention for evaluation as in the section above.
 
 ---
 
@@ -178,16 +189,16 @@ For evaluation, ensure `--data-root` contains `validation.npy`, `--pwd-path` is 
 python build_npy_from_processed_data.py \
   --internal demo_data/processed_internal \
   --external demo_data/processed_external \
-  --out pipeline_artifacts
+  --out Training_Evaluation_Data
 ```
 
 ### Train only
 
 ```bash
 python train.py \
-  --data-path pipeline_artifacts/npy_internal \
+  --data-path Training_Evaluation_Data/npy_internal \
   --pwd-path demo_data/processed_internal \
-  --model-save Result
+  --model-save TrainedCheckpoints
 ```
 
 ### Evaluate only
@@ -198,8 +209,8 @@ See **Evaluating a trained checkpoint only** above.
 
 ## Outputs
 
-- Training writes `Best_model.pt` and loss / DSC curves under **`--model-save`**.
-- Evaluation writes subfolders such as **`eval_*`** under **`--model-root`**, including `validation_results.csv`, predicted masks, and uncertainty maps.
+- Training writes `Best_model.pt` and loss / DSC curves under **`TrainedCheckpoints`** (`--model-save`).
+- Evaluation writes **`eval_*`** subfolders under **`Results`** (or `--results-root`), including `validation_results.csv`, predicted masks, and uncertainty maps.
 - CSV columns: Placenta / Myometrium Dice, IoU, HD95, NSD; case columns include `Patient`, `FileName`, `CaseId`, `Group`.
 
 ---
@@ -209,13 +220,13 @@ See **Evaluating a trained checkpoint only** above.
 | File | Role |
 |------|------|
 | `train.py` | Training entry (`--data-path`, `--pwd-path`, `--model-save` required) |
-| `eval.py` | Evaluation entry (`--data-root`, `--pwd-path`, `--model-root` required) |
+| `eval.py` | Evaluation entry (`--data-root`, `--pwd-path`, `--model-root`; `--results-root` optional, default `Results`) |
 | `run_pipeline.py` | Manifest build → train → eval |
 | `build_npy_from_processed_data.py` | Build `*.npy` and merged processed tree from two processed roots |
 | `data_paths.py` | Resolve `train.npy` / `validation.npy` / `Best_model.pt` |
 | `datagenerator.py` | Dataset I/O |
 | `vision_mamba.py` | **`PasEMamba`** architecture |
-| `mamba_sys.py` | VSSM backbone (runtime DPE/EASF hooks) |
+| `mamba_sys.py` | VSSM backbone (runtime **DPE** / **EASF** hooks) |
 | `edl_utils.py` | EDL losses, **DPE** routing map, **EASF** fusion helpers |
 
 ---

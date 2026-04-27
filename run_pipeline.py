@@ -7,20 +7,23 @@ Required: ``--artifacts``, ``--model-save``. When building manifests, also pass
 If ``--skip-build-npy`` is set and training still runs, a real ``--processed-internal`` is required
 (as ``train.py --pwd-path``). For eval-only runs you may omit the processed roots.
 
+Convention (repo-relative paths): ``Training_Evaluation_Data`` for manifests / merged images,
+``TrainedCheckpoints`` for weights and training curves, ``Results`` for evaluation CSVs and predictions.
+
 Examples::
 
   python run_pipeline.py \\
     --processed-internal demo_data/processed_internal \\
     --processed-external demo_data/processed_external \\
-    --artifacts pipeline_artifacts \\
-    --model-save Result
+    --artifacts Training_Evaluation_Data \\
+    --model-save TrainedCheckpoints
 
-  # Artifacts exist; evaluation only
+  # Manifests exist; evaluation only (writes under Results by default)
   python run_pipeline.py --skip-build-npy --skip-train \\
-    --artifacts pipeline_artifacts --model-save Result
+    --artifacts Training_Evaluation_Data --model-save TrainedCheckpoints
 
   python build_npy_from_processed_data.py --internal demo_data/processed_internal \\
-    --external demo_data/processed_external --out pipeline_artifacts
+    --external demo_data/processed_external --out Training_Evaluation_Data
 """
 from __future__ import annotations
 
@@ -43,8 +46,8 @@ def main() -> None:
 
     p = argparse.ArgumentParser(
         description=(
-            "Build *.npy under --artifacts from processed roots, train into --model-save, then run eval. "
-            "All filesystem paths are explicit CLI arguments."
+            "Build *.npy under --artifacts from processed roots, train into --model-save, then run eval "
+            "(predictions under --results-root, default Results). Paths may be repo-relative."
         ),
     )
     p.add_argument(
@@ -68,12 +71,17 @@ def main() -> None:
     p.add_argument(
         "--artifacts",
         required=True,
-        help="Output root for npy_* and processed_eval_merged",
+        help="Output root for npy_* and processed_eval_merged (e.g. Training_Evaluation_Data)",
     )
     p.add_argument(
         "--model-save",
         required=True,
-        help="Directory for Best_model.pt, training curves, and eval outputs",
+        help="Directory for Best_model.pt and training curves (e.g. TrainedCheckpoints)",
+    )
+    p.add_argument(
+        "--results-root",
+        default="Results",
+        help="Directory for evaluation CSVs and prediction folders (forwarded to eval.py --results-root)",
     )
     p.add_argument("--epochs", type=int, default=None, help="Forwarded to train.py (default in train.py)")
     p.add_argument("--batch-size", type=int, default=None)
@@ -85,7 +93,11 @@ def main() -> None:
         default="pipeline",
         help="Suffix forwarded to eval.py --result-tag (separate result subfolders)",
     )
-    p.add_argument("--ckpt", default="", help="Optional eval.py --ckpt (overrides Best_model.pt under --model-save)")
+    p.add_argument(
+        "--ckpt",
+        default="",
+        help="Optional eval.py --ckpt (overrides Best_model.pt under --model-save; repo-relative ok)",
+    )
 
     args = p.parse_args()
 
@@ -115,6 +127,9 @@ def main() -> None:
     )
     artifacts = args.artifacts if os.path.isabs(args.artifacts) else os.path.join(repo, args.artifacts)
     model_save = args.model_save if os.path.isabs(args.model_save) else os.path.join(repo, args.model_save)
+    results_root = (
+        args.results_root if os.path.isabs(args.results_root) else os.path.join(repo, args.results_root)
+    )
 
     train_data = os.path.join(artifacts, "npy_internal")
     train_pwd = internal
@@ -174,6 +189,8 @@ def main() -> None:
             eval_pwd,
             "--model-root",
             model_save,
+            "--results-root",
+            results_root,
             "--result-tag",
             args.eval_tag,
         ]
@@ -182,9 +199,12 @@ def main() -> None:
         run_step("eval", eval_cmd)
 
     print("\nPipeline finished.\n")
-    print(f"  Checkpoints / eval outputs: {model_save}")
-    print(f"  Manifests / merged processed: {artifacts}")
-    print(f"  Evaluation CSV and predictions: under {model_save} in eval_* subfolders (see logs)\n")
+    print(f"  Trained weights / training curves: {model_save}")
+    print(f"  Manifests / merged processed images: {artifacts}")
+    if not args.skip_eval:
+        print(f"  Evaluation CSV and predictions: under {results_root} in eval_* subfolders (see logs)\n")
+    else:
+        print()
 
 
 if __name__ == "__main__":

@@ -416,7 +416,7 @@ class SS2D(nn.Module):
         W: int,
         fusion_uncertainty: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Four-way scan fusion; with ``fusion_uncertainty`` (DPE map u, [B,1,H,W]) apply ``zero_shot_easf`` (EASF), else uniform weights."""
+        """Four-way scan fusion; with ``fusion_uncertainty`` (DPE u, [B,1,H,W]) apply ``zero_shot_easf`` (EASF: Evidence-driven Anisotropic Scan Fusion), else uniform weights."""
         B, K, C, L = out_y.shape
         assert K == self.num_directions
 
@@ -855,7 +855,7 @@ class VSSM(nn.Module):
     @torch.no_grad()
     def set_runtime_attn(self, u_map: torch.Tensor, eps: float = 1e-8, renorm: bool = True):
         """
-        u_map: [B,1,H,W] DPE-derived uncertainty (higher → stronger EASF gating).
+        u_map: [B,1,H,W] DPE (Decoupled Prediction-Evidence) uncertainty (higher → stronger EASF gating).
         renorm=True: per-image min–max (legacy); False: u already in [0,1] (e.g. ``dpe_easf_routing_uncertainty``).
         """
         u = u_map.clone()

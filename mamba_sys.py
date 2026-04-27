@@ -308,7 +308,7 @@ class SS2D(nn.Module):
         self.d_inner = int(self.expand * self.d_model)
         self.dt_rank = math.ceil(self.d_model / 16) if dt_rank == "auto" else dt_rank
         self.num_directions = 4
-        # EASF-style uncertainty routing on by default; without runtime_attn it falls back to uniform fusion
+        # EASF (Evidence-driven Anisotropic Scan Fusion): DPE-driven routing on by default; without runtime_attn → uniform fusion
         self.use_anisotropic_fusion = True
 
         self.in_proj = nn.Linear(self.d_model, self.d_inner * 2, bias=bias, **factory_kwargs)
@@ -416,7 +416,7 @@ class SS2D(nn.Module):
         W: int,
         fusion_uncertainty: Optional[torch.Tensor] = None,
     ):
-        """Map ``out_y`` [B, 4, C, L] to [B, C, H, W]; ``fusion_uncertainty`` is DPE map u [B,1,H,W] for EASF."""
+        """Map ``out_y`` [B, 4, C, L] to [B, C, H, W]; ``fusion_uncertainty`` is DPE (Decoupled Prediction-Evidence) u [B,1,H,W] for EASF."""
         B, K, C, L = out_y.shape
         assert K == self.num_directions, "Direction count mismatch for anisotropic fusion."
 
@@ -875,7 +875,7 @@ class VSSM(nn.Module):
     @torch.no_grad()
     def set_runtime_attn(self, u_map: torch.Tensor, eps: float = 1e-8, renorm: bool = True):
         """
-        u_map: [N,1,H,W] DPE uncertainty; renorm=False assumes values already in [0,1] (e.g. ``dpe_easf_routing_uncertainty``).
+        u_map: [N,1,H,W] DPE (Decoupled Prediction-Evidence) uncertainty; renorm=False assumes [0,1] (e.g. ``dpe_easf_routing_uncertainty``).
         """
         u = u_map.clone()
         if renorm:
