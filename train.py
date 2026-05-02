@@ -13,7 +13,7 @@ import argparse
 from data_paths import resolve_train_npy_path, resolve_validation_npy_path
 from datagenerator import MyDatasetLoader
 from augmentation_strategies import get_train_transform_2D
-from vision_mamba import PasEMamba
+from vision_mamba import EGAMamba
 from mamba_sys import SS2D
 from edl_utils import edl_nll_kl_loss, dice_ce_loss, kl_consistency
 import random
@@ -182,7 +182,7 @@ def val_process(model, datasetloader, device, refine_with_prob: bool = False):
 
 
 
-class PasE_Mamba_Config:
+class EGA_Mamba_Config:
     def __init__(self):
         self.MODEL = {
             "VSSM": {
@@ -196,6 +196,12 @@ class PasE_Mamba_Config:
             "DROP_PATH_RATE": 0.2,
         }
         self.TRAIN = {"USE_CHECKPOINT": True}
+
+
+class PasE_Mamba_Config(EGA_Mamba_Config):
+    """Backward-compatible alias for checkpoints or scripts using the previous config name."""
+
+    pass
 
 
 def train(
@@ -224,11 +230,11 @@ def train(
 
     patchsize = (224, 224)
     num_class = 3
-    config = PasE_Mamba_Config()
+    config = EGA_Mamba_Config()
     os.makedirs(ms, exist_ok=True)
 
     model_save = ms
-    model_vision_mamba = PasEMamba(num_classes=num_class, config=config)
+    model_vision_mamba = EGAMamba(num_classes=num_class, config=config)
 
     model = model_vision_mamba.to(device)
     set_anisotropic_fusion(model, enabled=USE_ANISOTROPIC_FUSION)
@@ -380,7 +386,7 @@ def train(
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="PasE-Mamba (PasEMamba) training")
+    p = argparse.ArgumentParser(description="EGA-Mamba (EGAMamba) training")
     p.add_argument("--epochs", type=int, default=None, help="Override default epoch count")
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)

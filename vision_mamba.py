@@ -47,8 +47,8 @@ class UnifiedSegEDLHead(nn.Module):
         return logits, alpha
 
 
-class PasEMamba(nn.Module):
-    """PasE-Mamba: U-Mamba-style encoder–decoder, dual heads (segmentation logits + EDL), with DPE (Decoupled Prediction-Evidence) and EASF (Evidence-driven Anisotropic Scan Fusion) in the SS2D path."""
+class EGAMamba(nn.Module):
+    """EGA-Mamba (Evidence-Guided Anisotropic Mamba): Mamba-UNet-style encoder–decoder, dual heads (segmentation logits + EDL), with DPE (Decoupled Prediction-Evidence) and EASF (Evidence-driven Anisotropic Scan Fusion) in the SS2D path."""
 
     def __init__(self, num_classes: int, config):
         super().__init__()
@@ -129,3 +129,9 @@ class PasEMamba(nn.Module):
         if hasattr(self.backbone, "set_runtime_attn"):
             self.backbone.set_runtime_attn(out1["u_map"])
         return out1
+
+
+class PasEMamba(EGAMamba):
+    """Backward-compatible class name for checkpoints pickled before the EGA-Mamba rebrand."""
+
+    pass

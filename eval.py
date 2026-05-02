@@ -6,8 +6,8 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from vision_mamba import PasEMamba
-from train import PasE_Mamba_Config, set_anisotropic_fusion
+from vision_mamba import EGAMamba
+from train import EGA_Mamba_Config, set_anisotropic_fusion
 from datagenerator import MyDatasetLoader
 from augmentation_strategies import get_train_transform_2D
 from data_paths import resolve_best_model_pt, resolve_validation_npy_path
@@ -207,7 +207,7 @@ def load_mamba_edl_for_eval(
             sd = blob["state_dict"]
         else:
             sd = blob
-        model = PasEMamba(num_classes=3, config=config_mamba)
+        model = EGAMamba(num_classes=3, config=config_mamba)
         msg = model.load_state_dict(sd, strict=False)
         print(
             f"[Eval] load_state_dict(strict=False) missing={len(msg.missing_keys)} "
@@ -234,7 +234,7 @@ def mamba_edl_forward_for_eval(
     u_second_pass: bool,
 ) -> dict:
     """
-    - ``refine_with_prob=True``: use native probability refinement in ``PasEMamba.forward`` (needs ``dec_prob_proj``).
+    - ``refine_with_prob=True``: use native probability refinement in ``EGAMamba.forward`` (needs ``dec_prob_proj``).
     - ``u_second_pass=True`` (no prob refine): first pass estimates EDL uncertainty ``u``; second pass calls
       ``set_runtime_attn(u)`` so SS2D **EASF** (Evidence-driven Anisotropic Scan Fusion) uses **DPE** (Decoupled Prediction-Evidence) uncertainty.
     - Both False: single forward (legacy single-pass; backbone does not use ``u``).
@@ -292,7 +292,7 @@ def print_validation_metric_summary(df: pd.DataFrame) -> None:
 # -------------------------- 2. Validation loop --------------------------
 def run_validation_eval(device, config):
     print("===== Start validation / test evaluation =====")
-    config_mamba = PasE_Mamba_Config()
+    config_mamba = EGA_Mamba_Config()
     # isotropic baseline: no EASF heuristic — four directions summed with uniform weights (matches train ``set_anisotropic_fusion(False)``)
     use_anisotropic_fusion = config.get("use_anisotropic_fusion", False)
     use_refine_with_prob = config.get("use_refine_with_prob", True)
@@ -511,7 +511,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         description=(
-            "PasE-Mamba (PasEMamba) evaluation. Requires --data-root, --pwd-path, --model-root. "
+            "EGA-Mamba (EGAMamba) evaluation. Requires --data-root, --pwd-path, --model-root. "
             "Writes CSV and predictions under --results-root (default: Results). "
             "If --ckpt is omitted, resolves Best_model.pt under --model-root. "
             "EASF (Evidence-driven Anisotropic Scan Fusion): env EASF_FUSION_VARIANT=v2 (default) or legacy."
@@ -589,7 +589,7 @@ def main() -> None:
         "use_anisotropic_fusion": bool(args.aniso),
         "use_refine_with_prob": True,
         "use_edl_uncertainty_second_pass": bool(args.edl_u_second_pass),
-        "result_save_dir": "eval_EDL_results_retest",
+        "result_save_dir": "eval_EGA-Mamba_retest",
         "model_ckpt": model_ckpt,
     }
 
@@ -608,7 +608,7 @@ def main() -> None:
         cfg = dict(base_config)
         cfg["data_root"] = data_root
         cfg["pwd_path"] = pwd_path
-        cfg["result_save_dir"] = f"eval_PasE-Mamba_{slug}{tag_suffix}"
+        cfg["result_save_dir"] = f"eval_EGA-Mamba_{slug}{tag_suffix}"
         print(f"\n{'=' * 16} ▶ {suite_label} ▶ {'=' * 16}")
         print(
             f"  data_root={data_root}\n  pwd_path={pwd_path}\n"

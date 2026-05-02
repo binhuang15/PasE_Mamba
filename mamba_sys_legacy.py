@@ -1,4 +1,4 @@
-"""Legacy VSSM stack; the active training/eval stack uses ``mamba_sys`` + ``vision_mamba.PasEMamba``."""
+"""Legacy VSSM stack; the active training/eval stack uses ``mamba_sys`` + ``vision_mamba.EGAMamba``."""
 import os
 import time
 import math

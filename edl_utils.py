@@ -29,7 +29,7 @@ def dpe_easf_routing_uncertainty(
 
     - **Vacuity**: Dirichlet epistemic uncertainty K/S (matches Phase-1 u).
     - **Conflict**: half the total-variation distance between prior softmax(prior) and EDL expectation p = α/S,
-      in [0,1], emphasizing prior–evidence disagreement (PasE-specific; vanilla EDL segmentation omits this branch).
+      in [0,1], emphasizing prior–evidence disagreement (EGA-Mamba-specific; vanilla EDL segmentation omits this branch).
 
     Fused as ``(1-w) * norm(vacuity) + w * norm(conflict)``, then clamped; no extra trainable parameters.
     """

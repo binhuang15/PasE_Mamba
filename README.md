@@ -1,6 +1,6 @@
-# PasE-Mamba
+# EGA-Mamba
 
-**PasE-Mamba** is an ultrasound placenta segmentation codebase built around **`PasEMamba`**. It reports Placenta / Myometrium region metrics and supports **evidential deep learning (EDL)** uncertainty with **DPE** (**Decoupled Prediction-Evidence**) feeding **EASF** (**Evidence-driven Anisotropic Scan Fusion**) in the SS2D backbone.
+**EGA-Mamba** (**Evidence-Guided Anisotropic Mamba**) is an ultrasound placenta segmentation codebase built around **`EGAMamba`**. It reports Placenta / Myometrium region metrics and supports **evidential deep learning (EDL)** uncertainty with **DPE** (**Decoupled Prediction-Evidence**) feeding **EASF** (**Evidence-driven Anisotropic Scan Fusion**) in the SS2D backbone.
 
 ## Environment
 
@@ -24,14 +24,16 @@ If `pip install -e .` fails, follow `causal-conv1d/README.md` (NVCC, matching CU
 
 ## Clone and working directory
 
-Official repository: **[binhuang15/PasE_Mamba](https://github.com/binhuang15/PasE_Mamba)**.
+Official repository: **[binhuang15/EGA_Mamba](https://github.com/binhuang15/EGA_Mamba)**.
 
 ```bash
-git clone https://github.com/binhuang15/PasE_Mamba.git
-cd PasE_Mamba
+git clone https://github.com/binhuang15/EGA_Mamba.git
+cd EGA_Mamba
 ```
 
 Run scripts from the **repository root** (same directory as this `README.md`). **Examples below use repo-relative paths** so bundled `demo_data/` runs without edits.
+
+**Note:** The segmentation model class is **`EGAMamba`** in `vision_mamba.py`. The names `PasEMamba` and `PasE_Mamba_Config` remain as **aliases** so older checkpoints saved under the previous naming can still be loaded.
 
 ### Recommended directory names
 
@@ -217,4 +219,4 @@ See **Evaluating a trained checkpoint only** above.
 
 ## License and citation
 
-This project is released under the **MIT License**; see [`LICENSE`](LICENSE) in the repository root. When citing, refer to the work as **PasE-Mamba** and link this repository.
+This project is released under the **MIT License**; see [`LICENSE`](LICENSE) in the repository root. When citing, refer to the work as **EGA-Mamba** (*Evidence-Guided Anisotropic Mamba*) and link [https://github.com/binhuang15/EGA_Mamba](https://github.com/binhuang15/EGA_Mamba).
