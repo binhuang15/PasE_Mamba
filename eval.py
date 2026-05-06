@@ -115,6 +115,45 @@ CASE_HEADER = ["Patient", "FileName", "CaseId", "Group"]
 # Case-level export subfolders (must match processed layout: 1-Normal / 2-PAS)
 CASE_FOLDER_BY_CLINICAL_LABEL = {1: "1-Normal", 2: "2-PAS", 3: "2-PAS"}
 
+# ---------------------------------------------------------------------------
+# Frozen EGA-Mamba inference (no env overrides — everything forced here for one-click eval).
+# ---------------------------------------------------------------------------
+FINAL_MYOMETRIUM_LOGIT_BIAS = 0.14
+
+# Canonical paths under repo root (``python eval.py`` with no args uses these).
+DEFAULT_DATA_ROOT = os.path.join("Training_Evaluation_Data", "npy_eval_merged")
+DEFAULT_PWD_PATH = os.path.join("Training_Evaluation_Data", "processed_eval_merged")
+DEFAULT_MODEL_ROOT = "TrainedCheckpoints"
+DEFAULT_RESULTS_ROOT = "Results"
+
+# Strings for os.environ — must match edl_utils / mamba_sys readers.
+_FROZEN_EVAL_ENV: dict[str, str] = {
+    "EASF_SHARPNESS_TEMP": "2.0",
+    "EASF_FUSION_VARIANT": "v2",
+    "EASF_AGREE_SCALE": "1.0",
+    "EASF_WEIGHT_FLOOR": "0.07",
+    "EASF_U_BLEND_GAMMA": "0.9",
+    "EASF_U_GLOBAL_DAMPEN": "1",
+    "EASF_GLOBAL_DAMPEN_K": "1.5",
+    "EASF_GLOBAL_DAMPEN_THR": "0.38",
+    "EASF_FUSION_ENCODER": "0",
+    "EASF_FEATURE_GATE_STRENGTH": "0.22",
+}
+
+
+def freeze_eval_environment() -> None:
+    """Overwrite EASF-related env so inference never depends on the caller's shell."""
+    for k, v in _FROZEN_EVAL_ENV.items():
+        os.environ[k] = v
+
+
+SUBGROUP_METRIC_KEYS = [
+    ("PlacentaDice", "PlacentaDice_mean", "PlacentaDice_std"),
+    ("PlacentaHD95(mm)", "PlacentaHD95_mean", "PlacentaHD95_std"),
+    ("MyometriumDice", "MyometriumDice_mean", "MyometriumDice_std"),
+    ("MyometriumHD95(mm)", "MyometriumHD95_mean", "MyometriumHD95_std"),
+]
+
 
 def _fmt_metric_scalar(x) -> str:
     if isinstance(x, str):
@@ -126,6 +165,72 @@ def _fmt_metric_scalar(x) -> str:
     if np.isnan(xf):
         return "NaN"
     return f"{xf:.4f}"
+
+
+def apply_final_eval_logits(logits: torch.Tensor) -> torch.Tensor:
+    """Fixed post-hoc adjustment on refined logits: additive bias on myometrium (class 2) only."""
+    z = logits.clone()
+    z[:, 2:3, :, :] = z[:, 2:3, :, :] + float(FINAL_MYOMETRIUM_LOGIT_BIAS)
+    return z
+
+
+def format_final_inference_summary() -> str:
+    """Log frozen knobs (all values come from ``_FROZEN_EVAL_ENV`` + logits bias)."""
+    parts = [f"{k}={v}" for k, v in sorted(_FROZEN_EVAL_ENV.items())]
+    parts.append(f"myometrium_logit_bias={float(FINAL_MYOMETRIUM_LOGIT_BIAS):.4f}")
+    parts.append("path=EASF+dec_prob_refine(fixed)")
+    return "[Eval] Frozen inference | " + " | ".join(parts)
+
+
+def _mean_std_numeric(series: pd.Series) -> tuple[float, float]:
+    vals = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+    vals = vals[~np.isnan(vals)]
+    if len(vals) == 0:
+        return float("nan"), float("nan")
+    m = float(np.mean(vals))
+    s = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
+    return m, s
+
+
+def save_fold_subgroup_metrics_summary_csv(
+    df: pd.DataFrame,
+    *,
+    suite_slug: str,
+    suite_display: str,
+    out_dir: str,
+) -> str | None:
+    """Normal vs PAS (+ All): Placenta / Myometrium Dice and HD95 mean±std for papers."""
+    path = os.path.join(out_dir, "validation_subgroup_metrics_summary.csv")
+    group_col = "Group"
+    subsets = [
+        ("All cases", pd.Series(True, index=df.index)),
+        ("Normal", df[group_col] == "Normal"),
+        ("PAS", df[group_col] == "PAS"),
+    ]
+    rows: list[dict] = []
+    for subset_en, mask in subsets:
+        sub = df.loc[mask]
+        n = int(mask.sum())
+        row: dict = {
+            "suite_slug": suite_slug or "",
+            "suite_display": suite_display or "",
+            "subset": subset_en,
+            "n_samples": n,
+        }
+        if n == 0:
+            for _, mk_mean, mk_std in SUBGROUP_METRIC_KEYS:
+                row[mk_mean] = float("nan")
+                row[mk_std] = float("nan")
+            rows.append(row)
+            continue
+        for col_src, mk_mean, mk_std in SUBGROUP_METRIC_KEYS:
+            m, s = _mean_std_numeric(sub[col_src])
+            row[mk_mean] = m
+            row[mk_std] = s
+        rows.append(row)
+    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig", float_format="%.6f")
+    print(f"[Eval] Subgroup metrics CSV (Dice + HD95): {path}")
+    return path
 
 
 def resolve_mamba_edl_ckpt_path(config: dict) -> str:
@@ -261,11 +366,47 @@ def mamba_edl_forward_for_eval(
     return model(image, refine_with_prob=False)
 
 
-def print_validation_metric_summary(df: pd.DataFrame) -> None:
-    """Aggregate metrics: all cases, Normal, PAS (``Group`` column)."""
+def print_validation_metric_summary(df: pd.DataFrame, suite_display: str = "") -> None:
+    """All / Normal / PAS: prominent Dice + HD95 block, then full metric dump."""
     numeric = df[METRIC_COLUMNS].apply(pd.to_numeric, errors="coerce")
-    print(f"\n======== Validation metrics (mean / std) ========")
+    hdr = f"{suite_display.strip()} — " if suite_display.strip() else ""
     group_col = "Group"
+
+    print(f"\n{'=' * 72}")
+    print(f"{hdr}Placenta / Myometrium Dice & HD95 (Normal vs PAS)")
+    print(f"{'=' * 72}")
+    hdr_row = (
+        f"{'Subset':<14} {'n':>6} "
+        f"{'Pla DSC':>11} {'Pla DSC σ':>11} "
+        f"{'Myo DSC':>11} {'Myo DSC σ':>11} "
+        f"{'Pla HD95':>11} {'Pla HD σ':>11} "
+        f"{'Myo HD95':>11} {'Myo HD σ':>11}"
+    )
+    print(hdr_row)
+    dice_groups = [
+        ("All cases", pd.Series(True, index=df.index)),
+        ("Normal", df[group_col] == "Normal"),
+        ("PAS", df[group_col] == "PAS"),
+    ]
+    for title, mask in dice_groups:
+        sub = numeric.loc[mask]
+        n = int(mask.sum())
+        if n == 0:
+            print(f"{title:<14} {n:>6} (empty)")
+            continue
+        m_pd, s_pd = _mean_std_numeric(sub["PlacentaDice"])
+        m_md, s_md = _mean_std_numeric(sub["MyometriumDice"])
+        m_ph, s_ph = _mean_std_numeric(sub["PlacentaHD95(mm)"])
+        m_mh, s_mh = _mean_std_numeric(sub["MyometriumHD95(mm)"])
+        print(
+            f"{title:<14} {n:>6} "
+            f"{m_pd:>11.4f} {s_pd:>11.4f} "
+            f"{m_md:>11.4f} {s_md:>11.4f} "
+            f"{m_ph:>11.4f} {s_ph:>11.4f} "
+            f"{m_mh:>11.4f} {s_mh:>11.4f}"
+        )
+
+    print(f"\n======== {hdr}All metrics (mean / std) ========")
     groups = [
         ("All cases", pd.Series(True, index=df.index)),
         (f'Normal ({group_col}=="Normal")', df[group_col] == "Normal"),
@@ -292,11 +433,14 @@ def print_validation_metric_summary(df: pd.DataFrame) -> None:
 # -------------------------- 2. Validation loop --------------------------
 def run_validation_eval(device, config):
     print("===== Start validation / test evaluation =====")
+
+    freeze_eval_environment()
+
     config_mamba = EGA_Mamba_Config()
-    # isotropic baseline: no EASF heuristic — four directions summed with uniform weights (matches train ``set_anisotropic_fusion(False)``)
-    use_anisotropic_fusion = config.get("use_anisotropic_fusion", False)
-    use_refine_with_prob = config.get("use_refine_with_prob", True)
-    use_edl_u_second_pass = config.get("use_edl_uncertainty_second_pass", False)
+    # Single final path: EASF + decoder probability refinement (matches training); no isotropic / u-only second-pass modes.
+    use_anisotropic_fusion = True
+    use_refine_with_prob = True
+    use_edl_u_second_pass = False
     # Paths
     model_path = resolve_mamba_edl_ckpt_path(config)
     result_base = config.get("eval_result_base") or config["model_save_root"]
@@ -319,14 +463,12 @@ def run_validation_eval(device, config):
             "If you trained with refinement and have dec_prob_proj, reload the matching checkpoint."
         )
         use_refine_with_prob = False
-    if use_edl_u_second_pass and use_refine_with_prob:
-        print("[Eval] refine_with_prob and edl_u_second_pass together are redundant; using refine only.")
-        use_edl_u_second_pass = False
     set_anisotropic_fusion(model, enabled=use_anisotropic_fusion)
     print(
-        f"[Eval] SS2D fusion: {'EASF (Evidence-driven Anisotropic Scan Fusion + DPE u)' if use_anisotropic_fusion else 'isotropic (uniform four-way sum)'} | "
+        f"[Eval] SS2D fusion: EASF (Evidence-driven Anisotropic Scan Fusion + DPE u) | "
         f"refine_prob={use_refine_with_prob} | edl_u_second_pass={use_edl_u_second_pass}"
     )
+    print(format_final_inference_summary())
     print(
         "[Eval] Note: full-model .pt loads all pickled Parameters; nothing stripped by strict load_state_dict."
     )
@@ -411,7 +553,8 @@ def run_validation_eval(device, config):
 
             seg_second = out["logits"]
             seg_first = out.get("logits_first", seg_second)
-            outputs_softmax = torch.softmax(seg_second, dim=1)
+            seg_for_metrics = apply_final_eval_logits(seg_second)
+            outputs_softmax = torch.softmax(seg_for_metrics, dim=1)
             uncertainty_map = out["u_map"]
 
             # Primary prediction: second forward (refined) when enabled
@@ -447,10 +590,10 @@ def run_validation_eval(device, config):
             uncertainty_img.save(os.path.join(result_save_path, class_name[class_label.item()], file_name.replace("_image.bmp", "_uncertainty.bmp")))
 
             # Pass raw logits (``dsc_calc`` softmaxes internally); do not pass softmaxed tensors
-            dsc_t, dsc_j = dsc_calc(mask, seg_second)
-            iou_t, iou_j = iou_calc(mask, seg_second)
-            hd95_t, hd95_j = hd95_calc(mask, seg_second, config["image_spacing"])
-            nsd_t, nsd_j = nsd_calc(mask, seg_second, config["image_spacing"])
+            dsc_t, dsc_j = dsc_calc(mask, seg_for_metrics)
+            iou_t, iou_j = iou_calc(mask, seg_for_metrics)
+            hd95_t, hd95_j = hd95_calc(mask, seg_for_metrics, config["image_spacing"])
+            nsd_t, nsd_j = nsd_calc(mask, seg_for_metrics, config["image_spacing"])
 
             # NaN-safe rounding for CSV
             def safe_value(val):
@@ -488,12 +631,25 @@ def run_validation_eval(device, config):
     os.makedirs(os.path.dirname(csv_save_path), exist_ok=True)
     df = pd.DataFrame(records, columns=header)
     df.to_csv(csv_save_path, index=False, encoding="utf-8-sig", float_format="%.4f")
-    print_validation_metric_summary(df)
+    suite_disp = (config.get("eval_suite_display") or "").strip()
+    print_validation_metric_summary(df, suite_display=suite_disp)
+    save_fold_subgroup_metrics_summary_csv(
+        df,
+        suite_slug=(config.get("eval_suite_slug") or "").strip(),
+        suite_display=suite_disp,
+        out_dir=os.path.dirname(csv_save_path),
+    )
     print(f"[Eval] Finished. Results: {csv_save_path}\n")
 
 
 def main() -> None:
-    """CLI entry for evaluation."""
+    """CLI entry: frozen EASF; default paths = repo smoke dataset layout."""
+    _repo = os.path.dirname(os.path.abspath(__file__))
+    if _repo not in sys.path:
+        sys.path.insert(0, _repo)
+
+    freeze_eval_environment()
+
     torch.manual_seed(0)
     torch.cuda.manual_seed_all(0)
     np.random.seed(0)
@@ -502,47 +658,29 @@ def main() -> None:
     cudnn.benchmark = False
     cudnn.deterministic = True
 
-    _repo = os.path.dirname(os.path.abspath(__file__))
-    if _repo not in sys.path:
-        sys.path.insert(0, _repo)
-
     def _abs_under_repo(p: str) -> str:
         return p if os.path.isabs(p) else os.path.join(_repo, p)
 
     parser = argparse.ArgumentParser(
         description=(
-            "EGA-Mamba (EGAMamba) evaluation. Requires --data-root, --pwd-path, --model-root. "
-            "Writes CSV and predictions under --results-root (default: Results). "
-            "If --ckpt is omitted, resolves Best_model.pt under --model-root. "
-            "EASF (Evidence-driven Anisotropic Scan Fusion): env EASF_FUSION_VARIANT=v2 (default) or legacy."
+            "EGA-Mamba evaluation: all EASF/env knobs frozen inside eval.py — run from repo root with defaults, "
+            "or pass paths. Defaults: Training_Evaluation_Data/npy_eval_merged, processed_eval_merged, TrainedCheckpoints."
         )
     )
     parser.add_argument(
         "--ckpt",
         default="",
-        help="Optional checkpoint (.pt); absolute or repo-relative; {run_index}→0. Default: Best_model.pt under --model-root",
+        help="Optional checkpoint (.pt); default: Best_model.pt under --model-root",
     )
     parser.add_argument(
         "--model-root",
-        required=True,
-        help="Directory containing Best_model.pt (training outputs; e.g. TrainedCheckpoints)",
+        default=DEFAULT_MODEL_ROOT,
+        help=f"Directory with Best_model.pt (default: {DEFAULT_MODEL_ROOT})",
     )
     parser.add_argument(
         "--results-root",
-        default="Results",
-        help="Directory for evaluation CSVs and eval_* prediction folders (default: Results)",
-    )
-    parser.add_argument(
-        "--aniso",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable EASF + DPE-routed uncertainty (Decoupled Prediction-Evidence); --no-aniso uses isotropic sum",
-    )
-    parser.add_argument(
-        "--edl-u-second-pass",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Two-pass: estimate EDL u then backbone with set_runtime_attn(u); --no-edl-u-second-pass for single pass",
+        default=DEFAULT_RESULTS_ROOT,
+        help=f"CSV / eval_* output root (default: {DEFAULT_RESULTS_ROOT})",
     )
     parser.add_argument(
         "--result-tag",
@@ -551,22 +689,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--data-root",
-        required=True,
-        help="Folder containing validation.npy (and optionally train.npy); absolute or relative to repo",
+        default=DEFAULT_DATA_ROOT,
+        help=f"Folder with validation.npy (default: {DEFAULT_DATA_ROOT})",
     )
     parser.add_argument(
         "--pwd-path",
-        required=True,
-        help="Processed image root referenced by filenames in the manifest",
+        default=DEFAULT_PWD_PATH,
+        help=f"Processed images root (default: {DEFAULT_PWD_PATH})",
     )
     args = parser.parse_args()
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-    print(
-        f"[Inference defaults] EASF/aniso={args.aniso} | edl_u_second_pass={args.edl_u_second_pass} | "
-        f"EASF_FUSION_VARIANT={os.environ.get('EASF_FUSION_VARIANT', 'v2')!r}"
-    )
+    print(format_final_inference_summary())
 
     model_save_root = _abs_under_repo(args.model_root)
     results_root = _abs_under_repo(args.results_root)
@@ -586,13 +721,9 @@ def main() -> None:
         "input_channels": 1,
         "patchsize": (224, 224),
         "image_spacing": (1.0, 1.0),
-        "use_anisotropic_fusion": bool(args.aniso),
-        "use_refine_with_prob": True,
-        "use_edl_uncertainty_second_pass": bool(args.edl_u_second_pass),
         "result_save_dir": "eval_EGA-Mamba_retest",
         "model_ckpt": model_ckpt,
     }
-
     os.makedirs(base_config["model_save_root"], exist_ok=True)
     os.makedirs(results_root, exist_ok=True)
 
@@ -609,6 +740,8 @@ def main() -> None:
         cfg["data_root"] = data_root
         cfg["pwd_path"] = pwd_path
         cfg["result_save_dir"] = f"eval_EGA-Mamba_{slug}{tag_suffix}"
+        cfg["eval_suite_display"] = suite_label
+        cfg["eval_suite_slug"] = slug
         print(f"\n{'=' * 16} ▶ {suite_label} ▶ {'=' * 16}")
         print(
             f"  data_root={data_root}\n  pwd_path={pwd_path}\n"

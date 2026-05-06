@@ -164,7 +164,9 @@ python eval.py \
   --ckpt TrainedCheckpoints/Best_model.pt
 ```
 
-**DPE** / **EASF** inference switches: `--aniso` / `--no-aniso`, `--edl-u-second-pass` / `--no-edl-u-second-pass`; fusion variant via `EASF_FUSION_VARIANT` (`v2` vs `legacy`). See `python eval.py --help`.
+From the repo root, defaults match the paths above — **`python eval.py` alone** is enough if that layout exists.
+
+**EASF inference:** all fusion hyperparameters are **hard-frozen in `eval.py`** (`freeze_eval_environment()`; sharpness temp 2.0, v2 fusion, decoder refine, myometrium logit bias 0.14). Shell environment **cannot** change them for this script.
 
 ---
 
