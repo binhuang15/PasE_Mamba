@@ -116,7 +116,8 @@ CASE_HEADER = ["Patient", "FileName", "CaseId", "Group"]
 CASE_FOLDER_BY_CLINICAL_LABEL = {1: "1-Normal", 2: "2-PAS", 3: "2-PAS"}
 
 # ---------------------------------------------------------------------------
-# Frozen EGA-Mamba inference (no env overrides — everything forced here for one-click eval).
+# Frozen EGA-Mamba inference env (EASF hyperparameters read inside ``mamba_sys``).
+# Default ``eval.py`` protocol: first forward → EDL u_map; second forward → EASF (train stays single-pass / no EASF).
 # ---------------------------------------------------------------------------
 FINAL_MYOMETRIUM_LOGIT_BIAS = 0.14
 
@@ -174,12 +175,25 @@ def apply_final_eval_logits(logits: torch.Tensor) -> torch.Tensor:
     return z
 
 
-def format_final_inference_summary() -> str:
-    """Log frozen knobs (all values come from ``_FROZEN_EVAL_ENV`` + logits bias)."""
+def format_final_inference_summary(
+    *,
+    use_anisotropic_fusion: bool,
+    use_refine_with_prob: bool,
+    use_edl_u_second_pass: bool,
+) -> str:
+    """Log frozen EASF env + runtime path + logits bias."""
     parts = [f"{k}={v}" for k, v in sorted(_FROZEN_EVAL_ENV.items())]
     parts.append(f"myometrium_logit_bias={float(FINAL_MYOMETRIUM_LOGIT_BIAS):.4f}")
-    parts.append("path=EASF+dec_prob_refine(fixed)")
-    return "[Eval] Frozen inference | " + " | ".join(parts)
+    if use_refine_with_prob:
+        path = "dec_prob_refine(Egamamba.forward)" + ("+EASF" if use_anisotropic_fusion else "_no_EASF")
+    elif use_edl_u_second_pass and use_anisotropic_fusion:
+        path = "two_pass_first_u_then_EASF"
+    elif use_edl_u_second_pass:
+        path = "two_pass_first_u_no_EASF"
+    else:
+        path = "single_pass_no_EASF"
+    parts.append(f"path={path}")
+    return "[Eval] Inference | " + " | ".join(parts)
 
 
 def _mean_std_numeric(series: pd.Series) -> tuple[float, float]:
@@ -437,10 +451,13 @@ def run_validation_eval(device, config):
     freeze_eval_environment()
 
     config_mamba = EGA_Mamba_Config()
-    # Single final path: EASF + decoder probability refinement (matches training); no isotropic / u-only second-pass modes.
-    use_anisotropic_fusion = True
-    use_refine_with_prob = True
-    use_edl_u_second_pass = False
+    # Default test-time protocol: first forward → EDL u_map; second forward → SS2D EASF driven by that u.
+    # Training stays single-pass without EASF (see train.py); override via CLI for ablations.
+    use_refine_with_prob = bool(config.get("use_refine_with_prob", False))
+    use_edl_u_second_pass = bool(config.get("use_edl_u_second_pass", True))
+    use_anisotropic_fusion = bool(config.get("use_anisotropic_fusion", True))
+    if use_refine_with_prob:
+        use_edl_u_second_pass = False
     # Paths
     model_path = resolve_mamba_edl_ckpt_path(config)
     result_base = config.get("eval_result_base") or config["model_save_root"]
@@ -464,11 +481,18 @@ def run_validation_eval(device, config):
         )
         use_refine_with_prob = False
     set_anisotropic_fusion(model, enabled=use_anisotropic_fusion)
+    fusion_note = "EASF (DPE u)" if use_anisotropic_fusion else "disabled"
     print(
-        f"[Eval] SS2D fusion: EASF (Evidence-driven Anisotropic Scan Fusion + DPE u) | "
+        f"[Eval] SS2D fusion: {fusion_note} | "
         f"refine_prob={use_refine_with_prob} | edl_u_second_pass={use_edl_u_second_pass}"
     )
-    print(format_final_inference_summary())
+    print(
+        format_final_inference_summary(
+            use_anisotropic_fusion=use_anisotropic_fusion,
+            use_refine_with_prob=use_refine_with_prob,
+            use_edl_u_second_pass=use_edl_u_second_pass,
+        )
+    )
     print(
         "[Eval] Note: full-model .pt loads all pickled Parameters; nothing stripped by strict load_state_dict."
     )
@@ -555,9 +579,8 @@ def run_validation_eval(device, config):
             seg_first = out.get("logits_first", seg_second)
             seg_for_metrics = apply_final_eval_logits(seg_second)
             outputs_softmax = torch.softmax(seg_for_metrics, dim=1)
-            uncertainty_map = out["u_map"]
 
-            # Primary prediction: second forward (refined) when enabled
+            # Metrics / _pred.bmp: second-pass logits when two-pass u→EASF (or EGAMamba refine); else single-pass
             outputs_softmax_ori = F.interpolate(outputs_softmax, size=(ori_shape[0].item(), ori_shape[1].item()),
                                                 mode='bilinear', align_corners=True)
             pred_mask = torch.argmax(outputs_softmax_ori, dim=1).squeeze().cpu().numpy().astype(np.uint8)
@@ -583,7 +606,9 @@ def run_validation_eval(device, config):
             os.makedirs(os.path.join(result_save_path, class_name[class_label.item()]), exist_ok=True)
             mask_img.save(os.path.join(result_save_path, class_name[class_label.item()], file_name.replace("_image.bmp", "_pred1.bmp")))
 
-            uncertainty_map = F.interpolate(uncertainty_map, size=(ori_shape[0].item(), ori_shape[1].item()), mode='bilinear', align_corners=True)
+            # Uncertainty figure: first-pass u_map when available (matches “first pass estimates u” protocol)
+            u_for_vis = out.get("u_map_first", out["u_map"])
+            uncertainty_map = F.interpolate(u_for_vis, size=(ori_shape[0].item(), ori_shape[1].item()), mode='bilinear', align_corners=True)
             uncertainty_np = uncertainty_map[0,0,:,:].cpu().numpy()
             uncertainty_np = (uncertainty_np - np.min(uncertainty_np)) / (np.max(uncertainty_np) - np.min(uncertainty_np) + 1e-8)
             uncertainty_img = Image.fromarray((uncertainty_np * 255).astype(np.uint8))
@@ -643,7 +668,7 @@ def run_validation_eval(device, config):
 
 
 def main() -> None:
-    """CLI entry: frozen EASF; default paths = repo smoke dataset layout."""
+    """CLI entry: default test protocol is two-pass (first u_map → second pass with EASF); ``--single-pass-eval`` matches train inference."""
     _repo = os.path.dirname(os.path.abspath(__file__))
     if _repo not in sys.path:
         sys.path.insert(0, _repo)
@@ -663,8 +688,9 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         description=(
-            "EGA-Mamba evaluation: all EASF/env knobs frozen inside eval.py — run from repo root with defaults, "
-            "or pass paths. Defaults: Training_Evaluation_Data/npy_eval_merged, processed_eval_merged, TrainedCheckpoints."
+            "EGA-Mamba evaluation: frozen EASF env vars for reproducibility. "
+            "Default is two-pass inference — first forward yields EDL u, second enables SS2D EASF. "
+            "Use --single-pass-eval for the same single-forward/no-EASF setup as train.py."
         )
     )
     parser.add_argument(
@@ -697,11 +723,47 @@ def main() -> None:
         default=DEFAULT_PWD_PATH,
         help=f"Processed images root (default: {DEFAULT_PWD_PATH})",
     )
+    parser.add_argument(
+        "--single-pass-eval",
+        action="store_true",
+        help="One forward, no EASF (matches train.py inference). Ignores --refine-with-prob.",
+    )
+    parser.add_argument(
+        "--no-anisotropic-fusion",
+        action="store_true",
+        help="Disable SS2D EASF (second forward still runs when using default two-pass u protocol).",
+    )
+    parser.add_argument(
+        "--refine-with-prob",
+        action="store_true",
+        help="Use EGAMamba.forward decoder refinement instead of u-map→manual second forward+EASF.",
+    )
     args = parser.parse_args()
+
+    if args.single_pass_eval:
+        use_edl_u_second_pass = False
+        use_anisotropic_fusion = False
+        use_refine_with_prob = False
+        if args.refine_with_prob:
+            print("[Eval] Note: --single-pass-eval ignores --refine-with-prob.")
+    elif args.refine_with_prob:
+        use_edl_u_second_pass = False
+        use_anisotropic_fusion = not args.no_anisotropic_fusion
+        use_refine_with_prob = True
+    else:
+        use_edl_u_second_pass = True
+        use_anisotropic_fusion = not args.no_anisotropic_fusion
+        use_refine_with_prob = False
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-    print(format_final_inference_summary())
+    print(
+        format_final_inference_summary(
+            use_anisotropic_fusion=use_anisotropic_fusion,
+            use_refine_with_prob=use_refine_with_prob,
+            use_edl_u_second_pass=use_edl_u_second_pass,
+        )
+    )
 
     model_save_root = _abs_under_repo(args.model_root)
     results_root = _abs_under_repo(args.results_root)
@@ -723,6 +785,9 @@ def main() -> None:
         "image_spacing": (1.0, 1.0),
         "result_save_dir": "eval_EGA-Mamba_retest",
         "model_ckpt": model_ckpt,
+        "use_anisotropic_fusion": use_anisotropic_fusion,
+        "use_refine_with_prob": use_refine_with_prob,
+        "use_edl_u_second_pass": use_edl_u_second_pass,
     }
     os.makedirs(base_config["model_save_root"], exist_ok=True)
     os.makedirs(results_root, exist_ok=True)

@@ -78,7 +78,6 @@ def train_process(model, optimizer, datasetloader, device, refine_with_prob: boo
 
     total_loss = 0
     dsc_list = [], [], []
-    dsc_second_list = [], [], []
     counter = 0
     for j, (imageData, maskData, classLabel, patient_name) in enumerate(datasetloader):
         inputs = imageData.to(device)
@@ -104,23 +103,6 @@ def train_process(model, optimizer, datasetloader, device, refine_with_prob: boo
         dsc_list[1].append(dsc_all[1])
         dsc_list[2].append(dsc_all[2])
 
-        predict_mask = model(inputs.clone(), refine_with_prob=refine_with_prob)
-
-        loss_seg = dice_ce_loss(predict_mask["logits"], masks[:,0,:,:].long())
-        loss_edl, _ = edl_nll_kl_loss(predict_mask["alpha"], masks[:,0,:,:].long(), kl_weight=1e-3)
-        loss_c = kl_consistency(predict_mask["prob_edl"], predict_mask["prob_seg"], symmetric=True)
-
-        loss = loss_seg + 0.2 * loss_edl + 0.05 * loss_c
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-
-        dsc_all = dsc_calc(masks, predict_mask["logits"])
-
-        dsc_second_list[0].append(dsc_all[0])
-        dsc_second_list[1].append(dsc_all[1])
-        dsc_second_list[2].append(dsc_all[2])
-
         ## init runtime attention
         model.backbone._runtime_attn = None
         if hasattr(model.backbone, "_fusion_u"):
@@ -132,7 +114,7 @@ def train_process(model, optimizer, datasetloader, device, refine_with_prob: boo
 
     avg_loss = total_loss / (counter * labels.size(0))
 
-    return model, avg_loss, dsc_list, dsc_second_list
+    return model, avg_loss, dsc_list
 
 def val_process(model, datasetloader, device, refine_with_prob: bool = False):
     with torch.no_grad():
@@ -140,7 +122,6 @@ def val_process(model, datasetloader, device, refine_with_prob: bool = False):
 
         total_loss = 0
         dsc_list = [], [], []
-        dsc_second_list = [], [], []
         counter = 0
         for j, (imageData, maskData, classLabel, patient_name, _, _, _) in enumerate(datasetloader):
             inputs = imageData.to(device)
@@ -157,14 +138,6 @@ def val_process(model, datasetloader, device, refine_with_prob: bool = False):
             dsc_list[1].append(dsc_all[1])
             dsc_list[2].append(dsc_all[2])
 
-            predict_mask = model(inputs.clone(), refine_with_prob=refine_with_prob)
-
-            dsc_all = dsc_calc(masks, predict_mask["logits"])
-
-            dsc_second_list[0].append(dsc_all[0])
-            dsc_second_list[1].append(dsc_all[1])
-            dsc_second_list[2].append(dsc_all[2])
-
             ## init runtime attention
             model.backbone._runtime_attn = None
             if hasattr(model.backbone, "_fusion_u"):
@@ -178,7 +151,7 @@ def val_process(model, datasetloader, device, refine_with_prob: bool = False):
 
         avg_loss = total_loss / (counter * labels.size(0))
 
-    return model, avg_loss, dsc_list, dsc_second_list
+    return model, avg_loss, dsc_list
 
 
 
@@ -217,8 +190,8 @@ def train(
     """Training entry: ``data_path``, ``pwd_path``, ``model_save_path`` must be supplied explicitly."""
     repo = os.path.dirname(os.path.abspath(__file__))
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    USE_ANISOTROPIC_FUSION = True
-    USE_REFINE_WITH_PROB = True
+    USE_ANISOTROPIC_FUSION = False
+    USE_REFINE_WITH_PROB = False
 
     dp = os.path.abspath(data_path if os.path.isabs(data_path) else os.path.join(repo, data_path))
     pw = os.path.abspath(pwd_path if os.path.isabs(pwd_path) else os.path.join(repo, pwd_path))
@@ -247,7 +220,7 @@ def train(
     val_path = resolve_validation_npy_path(dp)
 
     img_trans = get_train_transform_2D(patchsize)
-    dataset_train = MyDatasetLoader(train_path, pwd=pw, mode="train", transform=img_trans["val"], device=device)
+    dataset_train = MyDatasetLoader(train_path, pwd=pw, mode="train", transform=img_trans["train"], device=device)
     dataset_val = MyDatasetLoader(val_path, pwd=pw, mode="test", transform=img_trans["val"], device=device)
     trainloader = DataLoader(dataset=dataset_train, batch_size=batchsize, shuffle=True, drop_last=False)
     valloader = DataLoader(dataset=dataset_val, batch_size=1, shuffle=False)
@@ -260,14 +233,13 @@ def train(
     best_avg_valid_dsc = 0.0
     best_epoch = 0
     best_dsc_placenta = best_dsc_myometrium = 0.0
-    best_dsc2_placenta = best_dsc2_myometrium = 0.0
 
     for epoch_i in range(epoch):
         epoch_start = time.time()
-        model, avg_train_loss, train_dsc, train_dsc_second = train_process(
+        model, avg_train_loss, train_dsc = train_process(
             model, optimizer, trainloader, device, refine_with_prob=USE_REFINE_WITH_PROB
         )
-        model, avg_valid_loss, test_dsc, test_dsc_second = val_process(
+        model, avg_valid_loss, test_dsc = val_process(
             model, valloader, device, refine_with_prob=USE_REFINE_WITH_PROB
         )
         scheduler.step(avg_valid_loss)
@@ -277,12 +249,8 @@ def train(
         train_dsc_myometrium = np.mean(train_dsc[2])
         test_dsc_placenta = np.mean(test_dsc[1])
         test_dsc_myometrium = np.mean(test_dsc[2])
-        train_dsc2_placenta = np.mean(train_dsc_second[1])
-        train_dsc2_myometrium = np.mean(train_dsc_second[2])
-        test_dsc2_placenta = np.mean(test_dsc_second[1])
-        test_dsc2_myometrium = np.mean(test_dsc_second[2])
 
-        avg_valid_dsc = test_dsc2_placenta + test_dsc2_myometrium
+        avg_valid_dsc = test_dsc_placenta + test_dsc_myometrium
 
         history.append(
             [
@@ -292,10 +260,6 @@ def train(
                 train_dsc_myometrium,
                 test_dsc_placenta,
                 test_dsc_myometrium,
-                train_dsc2_placenta,
-                train_dsc2_myometrium,
-                test_dsc2_placenta,
-                test_dsc2_myometrium,
             ]
         )
 
@@ -305,8 +269,6 @@ def train(
             best_avg_valid_dsc = avg_valid_dsc
             best_dsc_placenta = test_dsc_placenta
             best_dsc_myometrium = test_dsc_myometrium
-            best_dsc2_placenta = test_dsc2_placenta
-            best_dsc2_myometrium = test_dsc2_myometrium
             best_epoch = ep1
             torch.save(model, os.path.join(model_save, "Best_model.pt"))
             print(
@@ -315,21 +277,16 @@ def train(
                 )
             )
         print(
-            "Epoch: {:03d}, Training: Loss: {:.4f}, Placenta DSC: {:.4f}, Myometrium DSC: {:.4f}, "
-            "Placenta DSC2: {:.4f}, Myometrium DSC2: {:.4f} \n\t\t\tValidation: Loss: {:.4f}, "
-            "Placenta DSC: {:.4f}, Myometrium DSC: {:.4f}, Placenta DSC2: {:.4f}, Myometrium DSC2: {:.4f}, "
+            "Epoch: {:03d}, Training: Loss: {:.4f}, Placenta DSC: {:.4f}, Myometrium DSC: {:.4f} \n\t\t\t"
+            "Validation: Loss: {:.4f}, Placenta DSC: {:.4f}, Myometrium DSC: {:.4f}, "
             "Time: {:.4f}s, \n\t\t\tlearning rate: {:.7f}".format(
                 ep1,
                 avg_train_loss,
                 train_dsc_placenta,
                 train_dsc_myometrium,
-                train_dsc2_placenta,
-                train_dsc2_myometrium,
                 avg_valid_loss,
                 test_dsc_placenta,
                 test_dsc_myometrium,
-                test_dsc2_placenta,
-                test_dsc2_myometrium,
                 epoch_end - epoch_start,
                 optimizer.param_groups[0]["lr"],
             )
@@ -363,24 +320,6 @@ def train(
     plt.ylabel("DSC")
     fig3.savefig(os.path.join(model_save, "DSC_myometrium_curve.png"))
     plt.close(fig3)
-
-    fig4 = plt.figure()
-    plt.plot(history_arr[:, 6])
-    plt.plot(history_arr[:, 8])
-    plt.legend(["Tr DSC2", "Val DSC2=" + str(np.round(best_dsc2_placenta, decimals=4))])
-    plt.xlabel("Epoch Number")
-    plt.ylabel("DSC")
-    fig4.savefig(os.path.join(model_save, "DSC2_placenta_curve.png"))
-    plt.close(fig4)
-
-    fig5 = plt.figure()
-    plt.plot(history_arr[:, 7])
-    plt.plot(history_arr[:, 9])
-    plt.legend(["Tr DSC2", "Val DSC2=" + str(np.round(best_dsc2_myometrium, decimals=4))])
-    plt.xlabel("Epoch Number")
-    plt.ylabel("DSC")
-    fig5.savefig(os.path.join(model_save, "DSC2_myometrium_curve.png"))
-    plt.close(fig5)
 
     print(f"Training done. Best epoch={best_epoch}, weights: {os.path.join(model_save, 'Best_model.pt')}")
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-End-to-end driver: ``build_npy_from_processed_data`` → ``train.py`` → ``eval.py``.
+End-to-end driver: ``build_npy_from_processed_data`` → ``train.py`` (single forward, no EASF) → ``eval.py``
+(default: two-pass test — first u_map, second EASF; use ``--eval-single-pass`` for train-like eval).
 
 Required: ``--artifacts``, ``--model-save``. When building manifests, also pass
 ``--processed-internal`` and ``--processed-external``.
@@ -97,6 +98,21 @@ def main() -> None:
         "--ckpt",
         default="",
         help="Optional eval.py --ckpt (overrides Best_model.pt under --model-save; repo-relative ok)",
+    )
+    p.add_argument(
+        "--eval-single-pass",
+        action="store_true",
+        help="Forward to eval.py --single-pass-eval (same single-forward/no-EASF as training)",
+    )
+    p.add_argument(
+        "--eval-no-anisotropic-fusion",
+        action="store_true",
+        help="Forward to eval.py --no-anisotropic-fusion (two-pass u protocol without SS2D EASF)",
+    )
+    p.add_argument(
+        "--eval-refine-with-prob",
+        action="store_true",
+        help="Forward to eval.py --refine-with-prob (EGAMamba decoder refinement)",
     )
 
     args = p.parse_args()
@@ -196,6 +212,12 @@ def main() -> None:
         ]
         if args.ckpt:
             eval_cmd.extend(["--ckpt", args.ckpt])
+        if args.eval_single_pass:
+            eval_cmd.append("--single-pass-eval")
+        if args.eval_no_anisotropic_fusion:
+            eval_cmd.append("--no-anisotropic-fusion")
+        if args.eval_refine_with_prob:
+            eval_cmd.append("--refine-with-prob")
         run_step("eval", eval_cmd)
 
     print("\nPipeline finished.\n")
